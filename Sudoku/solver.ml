@@ -2,7 +2,7 @@ type available = { loc : int * int; possible : int list }
 (*s bo bil splošno uporabljen kot števec oziroma števka *)
 (* TODO: tip stanja ustrezno popravite, saj boste med reševanjem zaradi učinkovitosti
    želeli imeti še kakšno dodatno informacijo *)
-type state = { problem : Model.problem; current_grid : int option Model.grid;empty_cells : available array }
+type state = { problem : Model.problem; current_grid : int option Model.grid; empty_cells : available array }
 
 let print_state (state : state) : unit =
   Model.print_grid
@@ -12,34 +12,32 @@ let print_state (state : state) : unit =
 type response = Solved of Model.solution | Unsolved of state | Fail of state
 
 let filter_integers (array : int option array) : int list =
-  let rec aux acc list = function
+  let rec filter_integers_aux acc list = function
     | [] -> acc
     | x :: xs -> match x with
-      | None -> aux acc xs
-      | Some s -> aux (s :: acc) xs
+      | None -> filter_integers_aux acc xs
+      | Some s -> filter_integers_aux (s :: acc) xs
   in
-  aux [] (Array.to_list array)
+  filter_integers_aux [] (Array.to_list array)
 
 let init_possibilities row_ind col_ind (grid : int option grid) : int list =
   let row = filter_integers (Model.get_row grid row_ind)
   and column = filter_integers (Model.get_column grid col_ind) 
   and box_ind = Model.get_box_ind row_ind col_ind in
-  let unfiltered_box_as_array = 
-    Array.concat(Array.to_list(Model.get_box grid box_ind)) 
-  in
-  let filtered_box_as_list = filter_integers unfiltered_box_as_array in
-  let rec aux acc s =
-    if digit < 10 then
+  let filtered_box_as_list = filter_integers Array.concat(Array.to_list(Model.get_box grid box_ind)) in
+  (*škatlo moramo dati v obliko list, da jo lahko obravnavamo z isto funkcijo *)
+  let rec filtered_box_as_list_aux acc s =
+    if s < 10 then
       if (List.for_all (fun x -> x != s) row 
       && List.for_all (fun x -> x != s) column
       && List.for_all (fun x -> x != s) filtered_box_as_list)
-        then aux (s :: acc) (s + 1)
+        then filtered_box_as_list_aux (s :: acc) (s + 1)
       else 
-        aux acc (s + 1)
+        filtered_box_as_list_aux acc (s + 1)
     else
       acc
   in
-  aux [] 1
+  filtered_box_as_list_aux [] 1
 
 let initialize_empty_cells (grid : int option Model.grid) : available array =
   let rec cells_aux acc i j : available list =
@@ -75,12 +73,12 @@ let validate_state (state : state) : response =
     if Model.is_valid_solution state.problem solution then Solved solution
     else Fail state
 
-let update_empty_cells cells oldCell digit = 
-  let rec aux acc = function
+let update_empty_cells cells old_cell digit = 
+  let rec update_empty_cells_aux acc = function
     | [] -> acc
     | x :: xs -> 
       let new_cell = 
-        if x.loc = oldCell.loc then
+        if x.loc = old_cell.loc then
           {
             loc = x.loc; 
             possible = List.filter (fun i -> i != digit) x.possible;
@@ -88,10 +86,11 @@ let update_empty_cells cells oldCell digit =
         else 
           x
       in
-      aux (new_cell :: acc) xs
+      update_empty_cells_aux (new_cell :: acc) xs
   in
-  Array.of_list (aux [] (Array.to_list cells))
+  Array.of_list (update_empty_cells_aux [] (Array.to_list cells))
 
+(*v mrežo vstavi element in to mrežo zamenja s staro*)
 let updated_grid (grid : 'a Model.grid) loc digit : 'a Model.grid = 
   let new_grid = Model.copy_grid grid in
   let (i, j) = loc in
@@ -112,18 +111,17 @@ let cell_with_least_possibilities state =
         else
           find_aux cell len xs
     in
-    let arb_cell = state.empty_cells.(0) in
-    let arb_len = List.length arb_cell.possible in
+    let cell_arb = state.empty_cells.(0) in
+    let len_arb = List.length cell_arb.possible in
     let cell = 
-      find_aux arb_cell arb_len (Array.to_list state.empty_cells) 
+      find_aux cell_arb len_arb (Array.to_list state.empty_cells) 
     in
     if List.length cell.possible < 2 then
       None
     else
       Some cell
-
-let rec different_digits = 
-  function
+(*preteče vse digite in jih preveri *)
+let rec different_digits = function
   | [] -> true
   | x::xs ->
     if List.exists (fun i -> i = x) xs then
@@ -135,8 +133,8 @@ let check_grid (grid : int option Model.grid) : bool =
   let rec valid_rows = function
     | [] -> true
     | row :: xs ->
-      if different_digits (filter_integers row) then
-        valid_rows xs
+      if different_digits (filter_integers row)
+        then valid_rows xs
       else
         false
   in
@@ -146,9 +144,10 @@ let check_grid (grid : int option Model.grid) : bool =
       boxes_aux ((Array.concat (Array.to_list box)) :: acc) xs
   in
   let boolean = (
+    valid_rows (boxes_aux [] (Model.boxes grid)) &&
     valid_rows (Model.rows grid) && 
-    valid_rows (Model.columns grid) &&
-    valid_rows (boxes_aux [] (Model.boxes grid))
+    valid_rows (Model.columns grid) 
+    
   )
   in
   boolean
@@ -166,33 +165,33 @@ let branch_state (state : state) : (state * state) option =
     | Some cell -> 
       let digit = List.hd cell.possible in
       let new_grid = updated_grid state.current_grid cell.loc digit in
-      let s1 = {
+      let a = {
         problem = state.problem;
         current_grid = new_grid;
         empty_cells = initialize_empty_cells new_grid;
       }
-      and s2 = {
+      and b = {
         problem = state.problem;
         current_grid = state.current_grid;
         empty_cells = update_empty_cells state.empty_cells cell digit;
       }
       in
-      Some (s1, s2)
+      Some (a, b)
   else
     None
 
 let clean_state state : state = 
-  let rec aux acc (cells : available list) : available list = 
+  let rec clean_state_aux acc (cells : available list) : available list = 
     match cells with
     | [] -> acc
     | x :: xs -> 
       match x.possible with
-      | [] -> aux acc xs
+      | [] -> clean_state_aux acc xs
       | digit :: [] -> 
         let (i, j) = x.loc in
         state.current_grid.(i).(j) <- (Some digit);
-        aux acc xs
-      | d1 :: d2 :: _ -> aux (x :: acc) xs
+        clean_state_aux acc xs
+      | e :: f :: _ -> clean_state_aux (x :: acc) xs
   in
   {
     problem = state.problem;
